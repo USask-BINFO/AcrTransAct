@@ -30,7 +30,6 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 ################ Arguments ################
 parser = ArgumentParser()
-# parser.add_argument("--sweep_id", type=str, default="rfkjw8l3")
 parser.add_argument("--model_type", type=str, default="CNN", help="CNN or LSTM")
 parser.add_argument("--esm_version", type=str, default="35m")
 parser.add_argument("--feature_mode", type=int, default=1,
@@ -48,11 +47,10 @@ parser.add_argument("--excl_mode", type=int, default=0,
 parser.add_argument("--run_mode", type=str, default="eval", help="train or eval")
 
 args = parser.parse_args()
-# sweep_id = args.sweep_id
 model_type = args.model_type
 feature_mode = args.feature_mode
 esm_version = args.esm_version
-do_sweep = False#args.do_sweep
+do_sweep = args.do_sweep
 wandb_log = args.wandb_log
 cross_val = args.cross_val
 undersample = args.undersample
@@ -519,10 +517,10 @@ sweep_key = model_type + "_" + features_names
 with open(SWEEP_SETTINGS_JSON, "r") as f:
     sweep_settings = json.load(f)
     sweep_id = sweep_settings[sweep_key]
+
 logger.log(f"using configs from sweep_id: {sweep_id}, read from disk")
 
-# TODO change to PROJ_VERSION
-inference_dir =  f"./code/results/AcrTransAct_v5/inf_{opt}_opt_{model_type}"+\
+inference_dir =  f"./code/results/{PROJ_VERSION}/inf_{opt}_opt_{model_type}"+\
                  f"/{sweep_id if sweep_id is not None else 'no_sweep'}/"
 if exclude_mode_dict[excl_mode] is not None:
     inference_dir = inference_dir[:-1]+f"_excl_{'_'.join(exclude_mode_dict[excl_mode])}/"
@@ -620,6 +618,7 @@ model = model_type_dic[model_type](
         verbose=0,
         debug_mode=0,
         )
+
 # train on train-val set
 if run_mode == "train":
     logger.log("#" * 50)
@@ -667,11 +666,12 @@ auc_dict = return_AUC(
 pred_stats = prediction_stats(preds, test_data, plot=False)
 logger.log("test predictions stat:\n" + str(pred_stats))
 
-logger.log(
-    "single fold metrics:\n"+
-    f"Best test_f1@best_epoch {model.val_f1_best_metric:.2f}, test_loss@best_epoch {model.val_loss_best_metric:.2f} at epoch {model.best_epoch}"
-)
-logger.log(f"test AUC: {auc_dict['AUC']:.2f} | test AUPR: {auc_dict['AUPR']:.2f}")
+if run_mode == "train":
+    logger.log(
+        "single fold metrics:\n"+
+        f"Best test_f1@best_epoch {model.val_f1_best_metric:.2f}, test_loss@best_epoch {model.val_loss_best_metric:.2f} at epoch {model.best_epoch}"
+    )
+    logger.log(f"test AUC: {auc_dict['AUC']:.2f} | test AUPR: {auc_dict['AUPR']:.2f}")
 
 fig, ax = model.plot_confusion_matrix(
     preds,
