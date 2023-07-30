@@ -1,6 +1,6 @@
 # AcrTransAct
 
-Welcome to the AcrTransAct repository! You can find our online tool here: (https://acrtransact.usask.ca).
+Welcome to the AcrTransAct repository! You can use our web application here: (https://AcrTransAct.usask.ca).
 
 This repository serves as a comprehensive method to reproduce the experiments conducted in our paper titled: **AcrTransAct: Pre-trained Protein Transformer Models for the Detection of Type I Anti-CRISPR Activities** and provides insight into the backend of our tool.
 
@@ -17,7 +17,7 @@ AcrTransAct is a Python-based tool developed for predicting the inhibition of CR
 - Provides evaluation metrics such as F1 score, accuracy, and AUC.
 
 ## Requirements
-
+```
 Python 3.9
 bertviz==1.4.0
 Bio==1.5.9
@@ -32,10 +32,11 @@ scikit_learn==1.2.2
 seaborn==0.11.2
 torch==1.12.0
 transformers==4.24.0
-
-* Optional:
+```
+**Optional:**
+```
 wandb
-
+```
 ## Installation
 
 1. Clone this repository to your local machine:
