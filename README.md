@@ -65,4 +65,4 @@ We would like to thank all the contributors and researchers who have contributed
 
 ## Contact
 
-For any questions or inquiries, please open an issue on our repository or contact us at [moeinhasani77@gmail.com](mailto:moeinhasani77@gmail.com).
+For any questions or inquiries, please open an issue on our repository or contact us at [moein.hasani@usask.ca](mailto:moein.hasani@usask.ca).
