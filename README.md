@@ -1,7 +1,10 @@
 # AcrTransAct
 
-Welcome to the AcrTransAct repository! You can find our online tool here: https://acrtransact.usask.ca
-This repository serves as a comprehensive method to reproduce the experiments conducted in our research and provides insight into the backend of our tool. By sharing the source code and data, we aim to foster transparency and facilitate understanding for anyone interested in exploring and validating the results obtained through our work. Feel free to utilize this repository to replicate our experiments and delve deeper into the functionalities of our tool.
+Welcome to the AcrTransAct repository! You can find our online tool here: (https://acrtransact.usask.ca).
+
+This repository serves as a comprehensive method to reproduce the experiments conducted in our paper titled: **AcrTransAct: Pre-trained Protein Transformer Models for the Detection of Type I Anti-CRISPR Activities** and provides insight into the backend of our tool.
+
+By sharing the source code and data, we aim to foster transparency and facilitate understanding for anyone interested in exploring and validating the results obtained through our work. Feel free to utilize this repository to replicate our experiments and delve deeper into the functionalities of our tool.
 
 ## Overview
 
@@ -30,7 +33,7 @@ seaborn==0.11.2
 torch==1.12.0
 transformers==4.24.0
 
-* optional:
+* Optional:
 wandb
 
 ## Installation
@@ -38,7 +41,7 @@ wandb
 1. Clone this repository to your local machine:
 
 ```bash
-git clone https://github.com/your_username/AcrTransAct.git
+git clone https://github.com/USask-BINFO/AcrTransAct.git
 cd AcrTransAct
 ```
 
@@ -62,4 +65,4 @@ We would like to thank all the contributors and researchers who have contributed
 
 ## Contact
 
-For any questions or inquiries, please open an issue on our repositry or contact us at [moeinhasani77@gmail.com](mailto:moeinhasani77@gmail.com).
+For any questions or inquiries, please open an issue on our repository or contact us at [moeinhasani77@gmail.com](mailto:moeinhasani77@gmail.com).
