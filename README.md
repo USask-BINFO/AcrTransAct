@@ -2,6 +2,8 @@
 
 Welcome to the AcrTransAct repository! You can use our web application here: (https://AcrTransAct.usask.ca).
 
+You can find our data here [data spreadsheet](https://docs.google.com/spreadsheets/d/1uzGLn_RfmoTqBoYQUz5CgRv-jCJ2oKvvCUjhL9QnGHo/edit?usp=sharing) along with the column descriptions and the sequences for Acr and CRISPR-Cas systems we have used.
+
 This repository serves as a comprehensive method to reproduce the experiments conducted in our paper titled: **AcrTransAct: Pre-trained Protein Transformer Models for the Detection of Type I Anti-CRISPR Activities** and provides insight into the backend of our tool.
 
 By sharing the source code and data, we aim to foster transparency and facilitate understanding for anyone interested in exploring and validating the results obtained through our work. Feel free to utilize this repository to replicate our experiments and delve deeper into the functionalities of our tool.
