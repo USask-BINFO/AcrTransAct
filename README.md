@@ -13,7 +13,7 @@ By sharing the source code and data, we aim to foster transparency and facilitat
 AcrTransAct is a Python-based tool developed for predicting the inhibition of CRISPR-Cas systems by anti-CRISPR proteins (Acrs). It utilizes deep learning models, specifically Convolutional Neural Networks (CNNs) and Long Short-Term Memory (LSTM) networks, to predict interactions between Acrs and CRISPR-Cas complexes, collectively contributing to inhibition. The tool takes protein sequences and structural features as input and provides accurate predictions of CRISPR-Cas inhibition.
 
 <p align="center">
-  <img src="img/AcrTransAct.png" alt="Alt Text" width="50%">
+  <img src="img/AcrTransAct.png" alt="Alt Text" width="100%">
 </p>
 
 ## Features
