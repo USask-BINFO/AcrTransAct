@@ -1,6 +1,6 @@
 # AcrTransAct
 
-Welcome to the AcrTransAct repository! You can use our web application here: (https://AcrTransAct.usask.ca).
+Welcome to the AcrTransAct repository! You can use our web application here: [AcrTransAct.usask.ca](https://AcrTransAct.usask.ca).
 
 You can find our data here [data spreadsheet](https://docs.google.com/spreadsheets/d/1uzGLn_RfmoTqBoYQUz5CgRv-jCJ2oKvvCUjhL9QnGHo/edit?usp=sharing) along with the column descriptions and the sequences for Acr and CRISPR-Cas systems we have used.
 
@@ -12,6 +12,10 @@ By sharing the source code and data, we aim to foster transparency and facilitat
 
 AcrTransAct is a Python-based tool developed for predicting the inhibition of CRISPR-Cas systems by anti-CRISPR proteins (Acrs). It utilizes deep learning models, specifically Convolutional Neural Networks (CNNs) and Long Short-Term Memory (LSTM) networks, to predict interactions between Acrs and CRISPR-Cas complexes, collectively contributing to inhibition. The tool takes protein sequences and structural features as input and provides accurate predictions of CRISPR-Cas inhibition.
 
+<p align="center">
+  <img src="img/AcrTransAct.png" alt="Alt Text" width="50%">
+</p>
+
 ## Features
 
 - Predict CRISPR-Cas inhibition using Acr sequences and structural features.
@@ -21,7 +25,6 @@ AcrTransAct is a Python-based tool developed for predicting the inhibition of CR
 ## Requirements
 ```
 Python 3.9
-bertviz==1.4.0
 Bio==1.5.9
 biolib==0.1.9
 biopython==1.80
@@ -69,3 +72,17 @@ We would like to thank all the contributors and researchers who have contributed
 ## Contact
 
 For any questions or inquiries, please open an issue on our repository or contact us at [moein.hasani@usask.ca](mailto:moein.hasani@usask.ca).
+
+## Cite our work:
+Please cite our work using the following:
+```
+@inproceedings{hasani2023acrtransact,
+              author = {Moein Hasani and Chantel N. Trost and Nolen Timmerman and Lingling Jin},
+              title = {AcrTransAct: Pre-trained Protein Transformer Models for the Detection of Type I Anti-CRISPR Activities},
+              booktitle = {Proceedings of The 14th ACM Conference on Bioinformatics, Computational Biology, and Health Informatics (ACM-BCB)},
+              year = {2023},
+              publisher = {ACM},
+              address = {houston, TX, USA},
+              pages = {6},
+            }
+```
