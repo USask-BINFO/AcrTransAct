@@ -24,33 +24,35 @@ import shutil
 from argparse import ArgumentParser
 import time
 from utils.misc import *
+os.environ["WANDB_SILENT"] = "true"
+time_stamp = datetime.now().strftime("%m-%d_%H:%M:%S")
 
 seed_everything(RANDOM_STATE)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-################ Arguments ################
+################ ARGS ################
 parser = ArgumentParser()
-parser.add_argument("--model_type", type=str, default="CNN", help="CNN or LSTM")
+parser.add_argument("--sweep_id", type=str, default="baxeytgi")
+parser.add_argument("--model_type", type=str, default="LSTM", help="CNN or LSTM")
 parser.add_argument("--esm_version", type=str, default="35m")
-parser.add_argument("--feature_mode", type=int, default=1,
-    help="1: ESM, 2: SF, 3: one-hot AA, 4: SF + ESM",
-)
+parser.add_argument("--label_smoothing", type=bool, default=0.1)
+parser.add_argument("--optimize_metric", type=str, default="Loss_CV") # F1_CV, F1, Loss_CV
+parser.add_argument("--monitor_ckpt", type=str, default="val_loss") # val_f1_score, val_loss
+
+parser.add_argument("--feature_mode", type=int, default=1, help="1: ESM, 2: SF, 3: one-hot AA, 4: SF + ESM",)
 parser.add_argument("--do_sweep", type=bool, default=False)
-parser.add_argument("--wandb_log", type=bool, default=False)
+parser.add_argument("--wandb_log", type=bool, default=True)
 parser.add_argument("--cross_val", type=bool, default=False)
 parser.add_argument("--undersample", type=bool, default=False)
-parser.add_argument("--optimize_metric", type=str, default="F1_CV")
-parser.add_argument("--monitor_ckpt", type=str, default="val_f1_score")
 parser.add_argument("--excl_mode", type=int, default=0,
-                    help="0: no exclusion, 1: exclude K12, ATCC_IF, 2: exclude K12, PaLML1_DVT419",
-)
-parser.add_argument("--run_mode", type=str, default="eval", help="train or eval")
+                help="0: no exclusion, 1: exclude K12, ATCC_IF, 2: exclude K12, PaLML1_DVT419",)
+parser.add_argument("--run_mode", type=str, default="train", help="train or eval")
 
 args = parser.parse_args()
 model_type = args.model_type
 feature_mode = args.feature_mode
 esm_version = args.esm_version
-do_sweep = args.do_sweep
+do_sweep = False # args.do_sweep
 wandb_log = args.wandb_log
 cross_val = args.cross_val
 undersample = args.undersample
@@ -58,21 +60,15 @@ excl_mode = args.excl_mode
 optimize_metric = args.optimize_metric
 monitor_ckpt = args.monitor_ckpt
 run_mode = args.run_mode
+sweep_id_ = args.sweep_id
+label_smoothing = args.label_smoothing
 print(args)
-
-if wandb_log:
-    os.environ["WANDB_SILENT"] = "true"
 
 if run_mode =="eval":
     do_sweep = False
     wandb_log = False
     cross_val = False
-    
-time_stamp = datetime.now().strftime("%m-%d_%H:%M:%S")
-logger = Logger(f"./code/logs/", f"logs_{time_stamp}.log")
-logger.log(f"time stamp: {time_stamp}")
-logger.log(f"debug mode: {DEBUG_MODE}")
-logger.log(f"args: {args}")
+
 
 exclude_mode_dict = {
     0: None,
@@ -102,8 +98,8 @@ elif feature_mode == 4: # ESM + SF
     use_aa = True
     FE_name = f"ESM{esm_version}"
 
+
 ######################################## Read Data ########################################
-logger.log(f"reading data from: {INHIBITION_EXCEL_FILE}")
 model_type_dic = {"CNN": AcrTransAct_CNN, "LSTM": AcrTransAct_LSTM}
 features_config = return_features_config(FE_name, task="PPI")
 
@@ -112,14 +108,18 @@ if feature_mode == 4:
 else:
     features_names = FE_name
 
-logger.log(f"data version: {DATA_VERSION}")
-logger.log(f"use_sf: {use_sf}")
-logger.log(f"use_aa: {use_aa}")
-logger.log(f"features names: {FE_name}")
+logger = Logger(f"./code/logs/", f"logs_{time_stamp}_{model_type}_{features_names}.log")
 logger.log(f"project name: {PROJ_VERSION}")
+logger.log(f"reading data from: {INHIBITION_EXCEL_FILE}")
+logger.log(f"debug mode: {DEBUG_MODE}")
+logger.log(f"args: {args}")
+logger.log(f"data version: {DATA_VERSION}")
+logger.log(f"features names: {features_names}")
 
 inhibition_df = pd.read_excel(INHIBITION_DF_PATH)
 inhibition_df = inhibition_df[inhibition_df["use"] == 1]
+inhibition_df = inhibition_df[inhibition_df["Acr_seq"].str.len() > 1]
+
 logger.log(f"Number of samples that can be used: {len(inhibition_df)}")
 
 if undersample:
@@ -231,10 +231,10 @@ class_weights = torch.tensor(
     class_weights, device=features_config["device"], dtype=torch.float
 )
 
-plot_train_val_data(
-    train_data,
-    test_data,
-    save_path=f"{VERSION_FOLDER}/label_dist.jpg",
+plot_train_test_lbl_sys(
+    train_df,
+    test_df,
+    save_path=f"{VERSION_FOLDER}/label_dist_crispr_sys.jpg",
     plot=0,
 )
 
@@ -258,11 +258,11 @@ elif use_aa and not use_sf:
 elif use_sf and not use_aa:
     seq_len_aa = 0
     seq_len_sf = loaders["train_loader"].dataset[0][0].size()[i]
-######################################## CROSS VALIDATION FUNCTION ########################################
+#################### CROSS VALIDATION FUNCTION ####################
 
 def cross_validation(cls_config, cls_name, reps=1, folds=5, epochs=100, tune=False):
     """
-    :param tune: whether this function is being used whithin the wandb sweep search
+    param tune: whether this function is being used whithin the wandb sweep search
     """
     global ckpt_dir_cv
 
@@ -319,9 +319,13 @@ def cross_validation(cls_config, cls_name, reps=1, folds=5, epochs=100, tune=Fal
                 class_weights, device=features_config["device"], dtype=torch.float
             )
             cls_config["class_weights"] = class_weights
-            loaders = return_loaders(
-                train_val_data, bs=BS, use_sf=use_sf, use_aa=use_aa
-            )
+
+            try:
+                loaders = return_loaders(
+                train_val_data, bs=BS, use_sf=use_sf, use_aa=use_aa, drop_last=True
+                )
+            except Exception as e:
+                logger.log(f"!!! Error in CV return_loaders {e}")
 
             aa_features_shape, ss_features_shape = return_aa_ss_shapes(
                 loaders, use_aa, use_sf
@@ -338,7 +342,6 @@ def cross_validation(cls_config, cls_name, reps=1, folds=5, epochs=100, tune=Fal
                 ckpt_dir_cv = f"./code/results/{PROJ_VERSION}/temp_chkpts_tune/"
             
             chkpt_dir = f"{ckpt_dir_cv}/{cls_name}_{fold_name}_{time_stamp}/"
-
 
             if exclude_mode_dict[excl_mode] is not None:
                 chkpt_dir = chkpt_dir[:-1]+f"_excl{'_'.join(exclude_mode_dict[excl_mode])}"
@@ -359,6 +362,14 @@ def cross_validation(cls_config, cls_name, reps=1, folds=5, epochs=100, tune=Fal
                 mode="min" if monitor_ckpt.__contains__("loss") else "max",
                 save_weights_only=True,
             )
+
+            es_call = EarlyStopping(
+            monitor=monitor_ckpt if not DEBUG_MODE else "train_loss",
+            patience=30,
+            mode="min" if monitor_ckpt.__contains__("loss") else "max",
+            verbose=0,
+            min_delta=0.005,
+        )
             #############################
             ## MODEL TRAINING AND EVAL ##
             #############################
@@ -370,18 +381,32 @@ def cross_validation(cls_config, cls_name, reps=1, folds=5, epochs=100, tune=Fal
                 devices=1,
                 callbacks=[
                     chkpt_call,
+                    es_call
                 ],
                 max_steps=1 if DEBUG_MODE else -1,
             )
+            
             model = model_type_dic[model_type](
+                cls_config,
+                channels_first=features_config["channels_first"],                
+            )
+
+            try:
+                trainer.fit(
+                    model,
+                    loaders["train_loader"],
+                    loaders["val_loader"],
+                )     
+     
+            except Exception as e:
+                logger.log(f"!!! Error in CV fit {e}")
+
+            model = model_type_dic[model_type].load_from_checkpoint(
+                chkpt_call.best_model_path,
                 cls_config,
                 channels_first=features_config["channels_first"],
             )
-            trainer.fit(
-                model,
-                loaders["train_loader"],
-                loaders["val_loader"],
-            )
+            model.eval()
             test_results = trainer.test(
                 model,
                 loaders["val_loader"],
@@ -433,17 +458,17 @@ def cross_validation(cls_config, cls_name, reps=1, folds=5, epochs=100, tune=Fal
 
             del model
             del loaders
-            torch.cuda.empty_cache()
+            free_mem()
 
         cv_rep_res.append(cv_folds_res)  # rep results
 
     return cv_rep_res
 
-######################################## HYPERPARAMETER TUNING ########################################
+#################### HYPERPARAMETER TUNING ####################
 if do_sweep:
-    sweep_i = 1
+    sweep_n = 1
     sweep_config = {
-        "name": f"{model_type}_{time_stamp}",
+        "name": f"{model_type}_{features_names}_{time_stamp}",
         "method": "bayes", 
         "metric": {
             "name": optimize_metric,
@@ -472,10 +497,10 @@ if do_sweep:
     logger.log(f"starting the search, optimizing for: {sweep_config['metric']}")
 
     def train_hparam_search():
-        global sweep_i
+        global sweep_n
         wandb.init(project=PROJ_VERSION)
-        logger.log(f"starting sweep {sweep_i}")
-        sweep_i += 1
+        logger.log(f"starting sweep {sweep_n}")
+        sweep_n += 1
         cls_config_tuning = get_config_from_pre_tune(
             wandb.config, monitor_ckpt, model_type
         )
@@ -494,47 +519,68 @@ if do_sweep:
             cls_config_tuning,
             reps=1,
             folds=CV_FOLDS,
-            epochs=50,
+            epochs=EPOCHS_CV-50,
             tune=True,
             cls_name=cls_model_name,
         )
         avg_results_cv = return_avg_cv_results(cv_rep_res)
-        
         wb_logger.log_metrics(avg_results_cv)
         wandb.finish()
+        free_mem()
 
-    #RUN SWEEP
     free_mem()
     sweep_id = wandb.sweep(sweep_config, project=PROJ_VERSION)
     start = time.time()
     wandb.agent(sweep_id, train_hparam_search, count=SWEEP_RUNS if not DEBUG_MODE else 1)
     end = time.time()
-    logger.log(f"total search time: {(end-start)/60:.2f} minutes")
+    logger.log(f"total search time: {(end-start)/60:.2f} minutes, sweep_id:{sweep_id}")
 
-################################################## TRAINING ##################################################
-# load the model's config
-sweep_key = model_type + "_" + features_names
-with open(SWEEP_SETTINGS_JSON, "r") as f:
-    sweep_settings = json.load(f)
-    sweep_id = sweep_settings[sweep_key]
-
-logger.log(f"using configs from sweep_id: {sweep_id}, read from disk")
-
-inference_dir =  f"./code/results/{PROJ_VERSION}/inf_{opt}_opt_{model_type}"+\
-                 f"/{sweep_id if sweep_id is not None else 'no_sweep'}/"
-if exclude_mode_dict[excl_mode] is not None:
-    inference_dir = inference_dir[:-1]+f"_excl_{'_'.join(exclude_mode_dict[excl_mode])}/"
+#################### LOAD CONFIG ####################
 else:
-    inference_dir = inference_dir[:-1]+"_no_excl/"
+    sweep_key = model_type + "_" + features_names
+    with open(SWEEP_SETTINGS_JSON, "r") as f:
+        sweep_settings = json.load(f)
+        sweep_id = sweep_settings[sweep_key] if sweep_id_ is None else sweep_id_
+    logger.log(f"using configs from sweep_id: {sweep_id}, read from disk")
+
+if sweep_id_ is None:
+   proj_folder = "AcrTransAct_v5" 
+else:
+    proj_folder = PROJ_VERSION
+
+inference_dir =  f"./code/results/{proj_folder}/inf_{opt}_opt_{model_type}"+\
+                 f"/{sweep_id if sweep_id is not None else 'no_sweep'}"
+if exclude_mode_dict[excl_mode] is not None:
+    inference_dir = inference_dir+f"_excl_{'_'.join(exclude_mode_dict[excl_mode])}"
+else:
+    inference_dir = inference_dir+"_no_excl"
+inference_dir+= "_"+features_names+"/"
+
 os.makedirs(inference_dir, exist_ok=True)
+
+if sweep_id_ is not None or do_sweep: # if sweep_id is in input args or sweeping is performed
+    sweep_id = sweep_id_ if sweep_id_ is not None else sweep_id
+    best_run = get_best_run_wandb(sweep_id, PROJ_VERSION)
+    aa_features_shape, ss_features_shape = return_aa_ss_shapes(loaders, use_aa, use_sf)
+    cls_config = return_cls_config(best_run)
+    cls_config["seq_len_aa"] = aa_features_shape[1] if use_aa else 0
+    cls_config["seq_len_sf"] = ss_features_shape[1] if use_sf else 0
+    cls_config["hidden_size_aa"] = aa_features_shape[0] if use_aa else 0
+    cls_config["hidden_size_sf"] = ss_features_shape[0] if use_sf else 0
+    cls_config["optimize_metric"] = optimize_metric
+    cls_config["monitor_metric_lr"] = MONITOR_LR
+    cls_config["sweep_id"] = sweep_id
+
+    with open(f"{inference_dir}/config.json", "w") as f: # save the sweep results
+        json.dump(cls_config, f)
 
 with open(f"{inference_dir}/config.json", "r") as f:
     cls_config = json.load(f)
 
 cls_config["class_weights"] = class_weights 
-cls_model_name = cls_config["cls_model_name"]
+cls_model_name = return_PPI_name(cls_config, model_type)
 
-save_cv_dir = f"./code/results/{PROJ_VERSION}/cv_rep_res/{sweep_id}/"
+save_cv_dir = f"./code/results/{PROJ_VERSION}/cv_rep_res/{sweep_id}_{time_stamp}/"
 os.makedirs(save_cv_dir, exist_ok=True)
 logger.log(f"Cross val save dir: {save_cv_dir}")
     
@@ -580,10 +626,24 @@ if cross_val:
 #################### TRAIN AND TEST, NO CROSSVAL ####################
 logger.log(f"model name: {cls_model_name}...")
 
-if run_mode == "train":
-    ckpt_name = "best_model"+"_"+time_stamp
-else:
+if label_smoothing>0: 
+    y_train = [label_smoothing if y == 0 else 1-label_smoothing for y in y_train]
+
+    loader_input["y_train"] = y_train
+    loaders = return_loaders(
+    loader_input,
+    use_aa=use_aa,
+    use_sf=use_sf,
+    bs=BS,
+    channels_first=features_config["channels_first"],
+    val=True,
+    device=device
+)
+    
+if run_mode == "eval" and sweep_id_ is None:
     ckpt_name = cls_config["weights"].replace(".ckpt", "")
+else:
+    ckpt_name = "best_model"+"_"+time_stamp
 
 chkpt_call = ModelCheckpoint(
     inference_dir,
@@ -598,7 +658,7 @@ es_call = EarlyStopping(
     monitor=monitor_ckpt if not DEBUG_MODE else "train_loss",
     patience=30,
     mode="min" if monitor_ckpt.__contains__("loss") else "max",
-    verbose=1,
+    verbose=0,
     min_delta=0.005,
 )
 
@@ -619,18 +679,24 @@ model = model_type_dic[model_type](
         debug_mode=0,
         )
 
+logger.log(f"Number of trainable parameters: {count_parameters(model)}")
+
 # train on train-val set
 if run_mode == "train":
     logger.log("#" * 50)
     logger.log(f"Training started on {len(train_data)} samples...")
     logger.log(f"validation size: {len(test_data)}")
     logger.log(f"checkpoint metric: {monitor_ckpt}")
-
-    trainer.fit(
-        model,
-        loaders["train_loader"],
-        loaders["val_loader"],
-    )
+    try:
+        trainer.fit(
+            model,
+            loaders["train_loader"],
+            loaders["val_loader"],
+        )
+        logger.log("Training finished ...")
+    except Exception as e:
+        print(f"!!! Exception in train: {e}")
+        
     logger.log(f"checkpoint at: {chkpt_call.best_model_path}")
 
     print("Training finished ...")
@@ -656,29 +722,30 @@ preds = model.pred_val(
     use_aa=use_aa,
     use_sf=use_sf,
 )
-preds_pos = preds[:, 1]
+preds_binary = [1. if p > 0.5 else 0. for p in preds]
+
 auc_dict = return_AUC(
-    preds_pos,
+    preds,
     y_test,
     save_path=inference_dir,
     plot_ROC=False,
+    title=f"{model_type} {features_names}"
 )
-pred_stats = prediction_stats(preds, test_data, plot=False)
+pred_stats = prediction_stats(preds_binary, test_data, plot=False)
 logger.log("test predictions stat:\n" + str(pred_stats))
 
-if run_mode == "train":
-    logger.log(
-        "single fold metrics:\n"+
-        f"Best test_f1@best_epoch {model.val_f1_best_metric:.2f}, test_loss@best_epoch {model.val_loss_best_metric:.2f} at epoch {model.best_epoch}"
-    )
-    logger.log(f"test AUC: {auc_dict['AUC']:.2f} | test AUPR: {auc_dict['AUPR']:.2f}")
+logger.log(
+    "single fold metrics:\n"+
+    f"Best test_f1@best_epoch {model.val_f1_best_metric:.2f}, test_loss@best_epoch {model.val_loss_best_metric:.2f} at epoch {model.best_epoch}"
+)
+logger.log(f"test AUC: {auc_dict['AUC']:.2f} | test AUPR: {auc_dict['AUPR']:.2f}")
 
 fig, ax = model.plot_confusion_matrix(
-    preds,
+    preds_binary,
     loaders["val_loader"].dataset.labels,
-    save_path=f"{inference_dir}/test_confusion_matrix.png",
-    title=f"Test confusion matrix {sweep_id}",
-    plot=False,
+    save_path=f"{inference_dir}/conf_mat_{time_stamp}.png",
+    title=f"{model_type} {features_names}",
+    plot=False
 )
 
 test_results = trainer.test(model, loaders["val_loader"],
@@ -726,6 +793,8 @@ if wandb_log:
         else None,
         "Monitor CKPT": monitor_ckpt,
         "Under Sampling": undersample,
+        "Label Smoothing": label_smoothing,
+        "Time Stamp": time_stamp,
     }
     wb_logger.log_hyperparams(hparams)
     wb_logger.log_metrics(pred_stats)
