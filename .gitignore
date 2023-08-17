@@ -40,3 +40,4 @@ biolib_results_inference/
 *.zip
 code/logs
 data_
+code/results

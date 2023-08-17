@@ -19,7 +19,7 @@ EPOCHS_CV = 100
 REPEAT_CV = 3  
 CV_FOLDS = 5
 
-SWEEP_RUNS = 20 # number of runs to do hyperparameter tuning
+SWEEP_RUNS = 1 # number of runs to do hyperparameter tuning
 
 # DATA
 VERSION_FOLDER = Path(f"./data/")

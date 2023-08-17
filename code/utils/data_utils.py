@@ -888,7 +888,7 @@ def prepare_loaders(
     return loaders, seq_len_aa, seq_len_sf
 
 
-def compute_class_weight(y_train, device):
+def compute_class_weights(y_train, device):
     class_weights = class_weight.compute_class_weight(
                 class_weight="balanced", classes=np.unique(y_train), y=y_train
             )

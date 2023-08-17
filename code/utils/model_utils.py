@@ -1,9 +1,6 @@
 import torch
 import wandb
-import os
-import json
-import numpy as np
-from sklearn.metrics import precision_score,recall_score,f1_score
+from sklearn.metrics import precision_score, recall_score, f1_score
 from utils.common_vars import MONITOR_LR
 
 

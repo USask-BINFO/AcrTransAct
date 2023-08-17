@@ -147,7 +147,7 @@ if do_sweep and sweep_id_ is None:
     sweep_id = trainer.start_sweep(SWEEP_RUNS)
 else:
     # not currently working with the new data
-    raise NotImplementedError, print("using saved sweeps curretnly unavailable, please perform a new sweeping")
+    raise NotImplementedError
     # sweep_key = model_type + "_" + features_names
     # with open(SWEEP_SETTINGS_JSON, "r") as f:
     #     sweep_settings = json.load(f)
@@ -172,7 +172,6 @@ else:
         cls_config = json.load(f)
 
 cls_model_name = return_PPI_name(cls_config, model_type)
-cls_config["class_weights"] = compute_class_weight(y_train, device)
 
 save_cv_dir = f"./code/results/{PROJ_VERSION}/cv_rep_res/{sweep_id}_{time_stamp}/"
 os.makedirs(save_cv_dir, exist_ok=True)
@@ -191,7 +190,8 @@ if wandb_log:
     )
 
 if cross_val:
-    cv_rep_res = trainer.cross_validation(cls_config, reps=1, folds=5, epochs=100) 
+
+    cv_rep_res = trainer.cross_validation(cv_config=cls_config, reps=1, folds=5, epochs=100) 
     avg_results_cv = return_avg_cv_results(cv_rep_res)
 
     if wandb_log:
@@ -207,6 +207,8 @@ if cross_val:
 ####################################
 ### Train and Eval for inference ###
 ####################################
+cls_config["class_weights"] = compute_class_weights(y_train, device)
+
 if label_smoothing>0:
     smooth_labels = [label_smoothing if y == 0.
                       else 1-label_smoothing for y in loaders["train_loader"].dataset.labels]

@@ -9,6 +9,7 @@ from utils.data_utils import (
     return_aa_ss_shapes,
     return_AUC,
     return_loaders,
+    compute_class_weights
 )
 from utils.models.cnn_model import AcrTransAct_CNN
 from utils.models.lstm_model import AcrTransAct_LSTM
@@ -93,7 +94,6 @@ class AcrTransActTrainer:
         if not tune:
             self.logger.log("Cross validation started...")
 
-            
         for rep in range(reps):
             cv_folds_res = []
             for fold, (train_index, test_index) in enumerate(
@@ -120,7 +120,8 @@ class AcrTransActTrainer:
                 y_train, y_val = [labels[i] for i in train_index], [
                     labels[i] for i in test_index
                 ]
-                # data_val = [data[i] for i in test_index]
+
+                cv_config["class_weights"] = compute_class_weights(y_train, device=self.device)
 
                 train_val_data = {
                     "X_train_aa": X_train_aa_fold if use_aa else None,
@@ -136,7 +137,7 @@ class AcrTransActTrainer:
                     train_val_data, bs=BS, use_sf=use_sf, use_aa=use_aa, drop_last=True
                     )
                 except Exception as e:
-                    self.logger.log(f"!!! Error in CV return_loaders {e}")
+                    self.logger.log(f"!!! Error in CV: {e}")
 
                 aa_features_shape, ss_features_shape = return_aa_ss_shapes(
                     loaders, use_aa, use_sf
@@ -174,7 +175,7 @@ class AcrTransActTrainer:
                 if os.path.isfile(chkpt_dir + chkpt_name):
                     chkpt_dir = chkpt_dir[:-1] + str(random.randint(0, 1000)) + "/"
 
-                
+                # train model # 
                 model, test_results = self.train_eval_model(cv_config, loaders, chkpt_dir, chkpt_name, epochs=epochs)
 
                 print(len(loaders["val_loader"].dataset.labels))
@@ -269,16 +270,15 @@ class AcrTransActTrainer:
             loaders["val_loader"],
         )
         
-        model.plot_history(
-        running_mean_window=1,
-        save_path=f"{chkpt_dir}/{self.time_stamp}_history.png",
-        plot=False,
-    )
+        model.plot_history(running_mean_window=1,
+                            save_path=f"{chkpt_dir}/{self.time_stamp}_history.png",
+                            plot=False,
+                            )
 
         model = self.model_type_dic[self.model_type].load_from_checkpoint(
                     ckpt_path,
                     cls_config,
-                    channels_first=self.features_config["channels_first"],
+                    channels_first=True,
                 )
         
         model.eval()
@@ -353,7 +353,6 @@ class AcrTransActTrainer:
         hparams = {
             "Model Name": cls_model_name,
             "Feature Extractor": self.features_config["model_name"],
-            "Data Version": DATA_VERSION,
         }
         wb_logger.log_hyperparams(hparams)
         
@@ -361,7 +360,7 @@ class AcrTransActTrainer:
         cv_rep_res = self.cross_validation(
             reps=1,
             folds=5,
-            cls_config=cls_config_tuning,
+            cv_config=cls_config_tuning,
         )
 
         avg_results_cv = return_avg_cv_results(cv_rep_res)
