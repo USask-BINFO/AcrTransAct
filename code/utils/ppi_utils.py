@@ -1,10 +1,10 @@
 import torch
 import numpy as np
 from utils.data_utils import one_hot_enc, read_fasta
-from utils.model_utils import comp_hidden_states
 from utils.ss_utils import *
 import wandb
 from utils.common_vars import *
+from utils.model_utils import get_best_run_wandb
 
 
 def return_target_Cas(path, proteins):
@@ -165,146 +165,6 @@ def read_crispr_data_df(
             print(f"Seqs exctracted {system}")
 
     return data
-
-
-def extract_hidden_state(seqs):
-    """
-    This function extracts the hidden states for a list of sequences
-
-    Parameters
-    ----------
-    seqs : list
-        list of sequences
-
-    Returns
-    -------
-    list
-        list of hidden states
-    """
-
-    if type(seqs) == str:
-        return comp_hidden_states(seqs)[-1]
-
-    states = []
-    for seq in seqs:
-        cas_state = comp_hidden_states(seq)[-1]
-        states.append(cas_state)
-
-    return states
-
-
-def extract_combined_features(data, config, verbose=0):
-    """
-    This function calculates the hidden states (ESM and SS) for the Acr and Cas sequences
-    and then concatenates the Acr and Cas hidden states
-
-    Parameters:
-    ----------------
-    data (list):
-        list of dictionaries containing the Acr and Cas sequences
-    config (dict):
-        dictionary containing the configuration parameters.
-        config["feature_mode"] = 0: just ESM
-        config["feature_mode"] = 1: one-hot encoding of amino acids
-        config["feature_mode"] = 3: for just SS, no ESM
-
-        config["Acr_Cas_mode"] = 1: just Cas
-        config["Acr_Cas_mode"] = 2: Acr and Cas
-
-        config["channels_first"] = True: the output tensor will have the shape (batch_size, channels, seq_len)
-        config["channels_first"] = False: the output tensor will have the shape (batch_size, seq_len, channels)
-
-    verbose (int):
-        verbose level
-
-    Returns:
-    ----------------
-    features (list):
-        list of tensors
-    """
-
-    if verbose:
-        print("Extracting features ...")
-        print(f"Feature mode: {config['feature_mode']}")
-        print("channels_first: ", config["channels_first"])
-
-    features = []
-
-    for i, dict in enumerate(data):
-        states = []
-        crispr_states = []
-        cas_proteins = dict["Cas_proteins"]
-        cas_ids = dict["Cas_ids"]
-
-        ########################### Acr ###########################
-        if config["Acr_Cas_mode"] > 1:
-            acr = dict["Acr_seq"]
-            acr_id = dict["Acr_id"]
-            acr_state = None
-
-            if config["feature_mode"] == 0:  # ESM
-                acr_state = extract_hidden_state(acr)
-            elif config["feature_mode"] == 3:  # SS
-                acr_ss = return_ss_pt(acr_id, ss_df_path=config["Acr_ss_df"])
-                acr_state = acr_ss.unsqueeze(0)
-            elif config["feature_mode"] == 1:  # one-hot encoding AA
-                acr_state = one_hot_enc(acr)
-                acr_state = acr_state.unsqueeze(0)
-
-            if config["channels_first"]:
-                acr_state = acr_state.permute(0, 2, 1)
-
-            states.append(acr_state)
-
-        ########################### CRISPR ###########################
-        # ESM
-        if config["feature_mode"] == 0:
-            crispr_states = extract_hidden_state(cas_proteins)
-            if config["channels_first"]:
-                crispr_states = [state.permute(0, 2, 1) for state in crispr_states]
-
-        # one-hot encoding
-        elif config["feature_mode"] == 1:
-            for cas in cas_proteins:
-                crispr_state = one_hot_enc(cas)
-                crispr_state = crispr_state.unsqueeze(0)
-                if config["channels_first"]:
-                    crispr_state = crispr_state.permute(0, 2, 1)
-
-                crispr_states.append(crispr_state)
-
-        # SF
-        elif config["feature_mode"] == 3:
-            for j in range(len(cas_ids)):
-                # get the secondary structure features for the Cas proteins
-                crispr_ss = return_ss_pt(cas_ids[j], ss_df_path=config["CRISPR_ss_df"])
-
-                crispr_ss = crispr_ss.unsqueeze(0)
-                if config["channels_first"]:
-                    crispr_ss = crispr_ss.permute(0, 2, 1)
-                    # print(crispr_ss.shape)
-
-                crispr_states.append(crispr_ss)
-
-        if config["CRISPR_mode"] == "concat":
-            states.extend(crispr_states)
-        # elif config["CRISPR_mode"] == "sum":
-        #     states.append(sum_tensors(crispr_states))
-
-        states_concat = torch.cat(states, dim=2 if config["channels_first"] else 1)
-
-        if config["Acr_Cas_mode"] == 1:  # Cas only mode
-            features.append(
-                (dict["CRISPR_system"], states_concat)
-            )  # if just crispr, add the system name to the features
-
-        else:
-            features.append(states_concat)
-
-        if verbose:
-            print(f"features extracted {i+1}/{len(data)}! size: {states_concat.shape}")
-
-    return features
 
 
 def return_config_by_run(run_id, proj):
@@ -564,6 +424,26 @@ def return_cls_config(config):
         "class_weights": config["class_weights"] if "class_weights" in config else None,
         "num_main_layers": config["num_main_layers"] if "num_main_layers" in config else 1,
    }
+
+
+def load_best_cls_config(sweep_id, aa_features_shape, ss_features_shape, inference_dir):
+    """
+    Loads the best cls config from the sweep hisotry and saves it in the inference dir
+    """
+    best_run = get_best_run_wandb(sweep_id, PROJ_VERSION)
+    cls_config = return_cls_config(best_run)
+    cls_config["seq_len_aa"] = aa_features_shape[1] 
+    cls_config["seq_len_sf"] = ss_features_shape[1] 
+    cls_config["hidden_size_aa"] = aa_features_shape[0] 
+    cls_config["hidden_size_sf"] = ss_features_shape[0]
+    cls_config["optimize_metric"] = OPTIMIZE_METRIC
+    cls_config["monitor_metric_lr"] = MONITOR_LR
+    cls_config["sweep_id"] = sweep_id
+
+    with open(f"{inference_dir}/config.json", "w") as f: # save the sweep results
+        json.dump(cls_config, f) 
+
+    return cls_config
 
 
 def get_config_from_pre_tune(config, monitor_ckpt, model_type):

@@ -177,13 +177,13 @@ class AcrTransAct_CNN(pl.LightningModule):
             # last layer on mode 1, intermediate layer on mode 2 and 3
             self.fc1 = nn.Linear(
                 in_features=in_features_aa + in_features_sf,
-                out_features=2 if self.mode == 1 else self.FC_nodes,
+                out_features=1 if self.mode == 1 else self.FC_nodes,
             )
             torch.nn.init.xavier_uniform_(self.fc1.weight)
 
         if self.mode >= 2:
             # last layer on mode 2 and 3
-            self.fc_last_layer2 = nn.Linear(in_features=self.FC_nodes, out_features=2)
+            self.fc_last_layer2 = nn.Linear(in_features=self.FC_nodes, out_features=1)
             torch.nn.init.xavier_uniform_(self.fc_last_layer2.weight)
             self.bn2 = nn.BatchNorm1d(self.FC_nodes)
 
@@ -192,6 +192,7 @@ class AcrTransAct_CNN(pl.LightningModule):
             torch.nn.init.xavier_uniform_(self.fc2.weight)
 
         self.save_hyperparameters()  # save the paramters for logging with Wandb
+
 
     def forward(self, x):
         if self.use_sf and self.use_aa:
@@ -302,20 +303,21 @@ class AcrTransAct_CNN(pl.LightningModule):
 
                 x = self.fc_last_layer2(x)
 
-        x = torch.nn.functional.softmax(x, dim=1)
+        # x = torch.nn.functional.softmax(x, dim=1)
+        x = torch.sigmoid(x)
         return x
+
 
     def training_step(self, batch, batch_idx):
         x, y = batch
-        y_hat = self(x)
+        y_hat = self(x).view(-1)
+        y = y.view(-1).to(self.device)
 
-        y = y.view(-1).type(torch.LongTensor).to(self.device)  # Convert y to LongTensor
-        y_hat = y_hat.to(self.device)  # Move y_hat to the same device as y
-
-        loss = F.cross_entropy(y_hat, y, weight=self.class_weights)
-        accuracy = (y_hat.argmax(dim=1) == y).float().mean()
-
-        f1 = f1_torch(y, y_hat.argmax(dim=1))[0]
+        sample_weights = torch.where(y > 0.5, self.class_weights[1], self.class_weights[0]).to(self.device)
+        loss = F.binary_cross_entropy(y_hat, y, weight=sample_weights)
+        
+        accuracy = (y_hat.round() == (y > 0.5).type(torch.LongTensor).to(self.device)).float().mean()
+        f1 = f1_torch((y > 0.5).type(torch.LongTensor).to(self.device), y_hat.round())[0]
 
         logs = {"loss": loss, "accuracy": accuracy, "f1": f1}
         self.log("train_loss", loss, prog_bar=True)
@@ -323,6 +325,7 @@ class AcrTransAct_CNN(pl.LightningModule):
         self.training_step_outputs.append(logs)
 
         return logs
+
 
     def on_train_epoch_end(self):
         avg_loss = torch.stack([x["loss"] for x in self.training_step_outputs]).mean()
@@ -349,15 +352,17 @@ class AcrTransAct_CNN(pl.LightningModule):
             self.train_acc_history.append(avg_acc.detach().cpu().numpy())
             self.train_f1_history.append(avg_f1.detach().cpu().numpy())
 
+
     def validation_step(self, batch, batch_idx):
         x, y = batch
-        y_hat = self(x)
-        y = y.view(-1).type(torch.LongTensor).to(self.device)  # Convert y to LongTensor
-        y_hat = y_hat.to(self.device)  # Move y_hat to the same device as y
+        y_hat = self(x).view(-1)
+        y = y.view(-1).to(self.device)
+
+        sample_weights = torch.where(y > 0.5, self.class_weights[1], self.class_weights[0]).to(self.device)
+        loss = F.binary_cross_entropy(y_hat, y, weight=sample_weights)
         
-        loss = F.cross_entropy(y_hat, y, weight=self.class_weights)
-        accuracy = (y_hat.argmax(dim=1) == y).float().mean()
-        f1 = f1_torch(y, y_hat.argmax(dim=1))[0]
+        accuracy = (y_hat.round() == (y > 0.5).type(torch.LongTensor).to(self.device)).float().mean()
+        f1 = f1_torch((y > 0.5).type(torch.LongTensor).to(self.device), y_hat.round())[0]
 
         logs = {
             "val_loss": loss,
@@ -368,6 +373,7 @@ class AcrTransAct_CNN(pl.LightningModule):
         self.validation_step_outputs.append(logs)
 
         return logs
+
 
     def on_validation_epoch_end(self):
         avg_val_loss = torch.stack(
@@ -415,15 +421,18 @@ class AcrTransAct_CNN(pl.LightningModule):
                 self.val_loss_best_metric = avg_val_loss.cpu().numpy()
                 self.val_f1_best_metric = avg_val_f1.cpu().numpy()
 
+
     def test_step(self, batch, batch_idx):
         x, y = batch
-        y_hat = self(x)
-        y = y.view(-1).type(torch.LongTensor).to(y_hat.device)  # Convert y to LongTensor
-        self.class_weights = self.class_weights.to(y_hat.device)
+        y_hat = self(x).view(-1).to(self.device)
+        y = y.view(-1).to(self.device)
+        self.class_weights = self.class_weights.to(self.device)
+
+        sample_weights = torch.where(y > 0.5, self.class_weights[1], self.class_weights[0]).to(self.device)
+        loss = F.binary_cross_entropy(y_hat, y, weight=sample_weights)
         
-        loss = F.cross_entropy(y_hat, y, weight=self.class_weights)
-        accuracy = (y_hat.argmax(dim=1) == y).float().mean()
-        f1, precision, recall = f1_torch(y, y_hat.argmax(dim=1), test_d = True)
+        accuracy = (y_hat.round() == (y > 0.5).type(torch.LongTensor).to(self.device)).float().mean()
+        f1, precision, recall = f1_torch((y > 0.5).type(torch.LongTensor).to(self.device), y_hat.round())
 
         logs = {
             "test_loss": loss,
@@ -434,6 +443,7 @@ class AcrTransAct_CNN(pl.LightningModule):
         }
         self.test_step_outputs.append(logs)
         return logs
+
 
     def on_test_epoch_end(self):
         avg_test_loss = torch.stack(
@@ -474,6 +484,7 @@ class AcrTransAct_CNN(pl.LightningModule):
             "test_recall": avg_test_recall,
         }
 
+
     def pred_val(self, val_loader, use_aa, use_sf, return_probs=False):
         """
         Predicts on validation set
@@ -498,13 +509,11 @@ class AcrTransAct_CNN(pl.LightningModule):
                     features = item[0].to("cpu")
                 pred = self(features)
 
-                if return_probs is False:
-                    pred = np.array(pred.argmax(dim=1))
-
                 preds.append(pred)
             preds = np.concatenate(preds)
             
         return preds
+
 
     def configure_optimizers(self):
         if self.optimizer_name == "Adam":
@@ -565,68 +574,8 @@ class AcrTransAct_CNN(pl.LightningModule):
             },
         }
 
-    def plot_confusion_matrix(
-        self,
-        preds,
-        val_labels,
-        save_path=None,
-        title = None,
-        cmap=plt.cm.Blues,
-        plot=False
-    ):
-        """
-        Plot confusion matrix
 
-        Parameters
-        ----------
-        preds : numpy array
-            predictions on validation set (either classes or probabilities)
-        save_path : str, optional
-            Path to save the plot, by default None
-        cmap : matplotlib colormap, optional
-            Colormap to use, by default plt.cm.Blues
-        """
-        labels = ["0", "1"]
-        preds = np.argmax(preds, axis=1)
-        val_labels = val_labels.cpu().numpy()
-        cm = confusion_matrix(val_labels, preds)
-
-        fig, ax = plt.subplots(figsize=(4, 5))
-        im = ax.imshow(cm, interpolation="nearest", cmap=cmap)
-        ax.set(
-            xticks=np.arange(cm.shape[1]),
-            yticks=np.arange(cm.shape[0]),
-            xticklabels=labels,
-            yticklabels=labels,
-            ylabel="True label",
-            xlabel="Predicted label",
-        )
-
-        plt.setp(ax.get_xticklabels(), rotation=45, ha="right", rotation_mode="anchor")
-
-        for i in range(cm.shape[0]):
-            for j in range(cm.shape[1]):
-                ax.text(
-                    j,
-                    i,
-                    str(cm[i, j]),  # Display count for each section
-                    ha="center",
-                    va="center",
-                    color="white" if cm[i, j] > 0.5 * np.max(cm) else "black",
-                )
-        fig.tight_layout()
-        if title is not None:
-            plt.title(title)
-
-        if save_path is not None:
-            plt.savefig(save_path, dpi=300, bbox_inches="tight")
-        
-        if plot:
-            plt.show()
-
-        return fig, ax
-
-    def plot_history(self, save_path=None, running_mean_window=1,plot=False):
+    def plot_history(self, save_path=None, running_mean_window=1, plot=False):
         """
         Plot training and validation history in 3 different subplots for F1 score, accuracy, and loss.
         Apply a running mean to every 3 epochs to smooth the curves. and indicates the best epoch by an x

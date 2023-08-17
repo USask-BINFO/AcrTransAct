@@ -3,16 +3,20 @@ import torch
 from Bio import SeqIO
 import numpy as np
 import torch
-from sklearn.manifold import TSNE
 import pandas as pd
 from torch.utils.data import Dataset, DataLoader
 import seaborn as sns
 import matplotlib.pyplot as plt
 from sklearn.metrics import roc_curve, auc, precision_recall_curve
-import os
 from utils.common_vars import *
+from utils.ss_utils import return_ss_pt
 from sklearn.model_selection import train_test_split
-from collections import Counter
+from utils.model_utils import comp_hidden_states
+from utils.model_utils import load_feature_extractor
+from sklearn.metrics import f1_score
+from sklearn.utils import class_weight
+import pickle
+import os
 
 
 class AA_SS_Dataset(Dataset):
@@ -42,6 +46,7 @@ class AA_SS_Dataset(Dataset):
 
     def __len__(self):
         return len(self.encodings_esm)
+
 
 class AA_Dataset(Dataset):
     """
@@ -98,41 +103,6 @@ def read_fasta(path, return_desc=False):
     return seqs
 
 
-def find_nums(input_str):
-    """This function finds the numbers in a string and returns them as a list
-    ----------
-    Returns
-    -------
-    nums : list
-        A list of string which are numbers found in the input"""
-
-    nums = re.findall(r"\d+", input_str)
-    return nums
-
-
-def TSNE_torch(input_tensor, n_components=50):
-    """
-    Applies t-SNE on a PyTorch tensor.
-    Parameters
-    ----------
-    tensor : torch.Tensor
-        PyTorch tensor.
-    Returns
-    -------
-    tensor_tsne_torch : torch.Tensor
-        t-SNE result.
-    """
-
-    tensor_np = input_tensor.cpu().numpy()
-
-    tsne = TSNE(n_components=n_components)
-    tensor_tsne = tsne.fit_transform(tensor_np)
-
-    tensor_tsne_torch = torch.from_numpy(tensor_tsne)
-
-    return tensor_tsne_torch
-
-
 def pad_features(X, max_len, channels_first=True):
     """
     Pads the input sequences to have the same length.
@@ -186,7 +156,6 @@ def one_hot_enc(seq):
     one_hot_seq : torch.Tensor
         One-hot encoded sequence
     """
-    # Amino acid to number dictionary
     aa_to_num = {
         "A": 0,
         "R": 1,
@@ -217,6 +186,7 @@ def one_hot_enc(seq):
 
     return one_hot_seq
 
+
 def return_loaders(
     data,
     bs,
@@ -226,7 +196,8 @@ def return_loaders(
     max_len_aa=None,
     max_len_ss=None,
     val=True,
-    device="cuda"
+    device="cuda",
+    drop_last=False,
 ):
     """
     Prepare the data for training and validation
@@ -235,27 +206,8 @@ def return_loaders(
     ----------
     data : dict
         Dictionary containing the data for training and validation
-        keys: X_train_esm, X_val_esm, X_train_ss, X_val_ss, y_train, y_val
-    bs : int, optional
-        Batch size, by default 64
-    use_aa : bool,
-        Whether to create a dataset with AA features, by default True
-    use_sf : bool,
-        Whether to create a dataset with SS features, by default True
-    channels_first : bool, optional
-        Whether to use channels first or last, by default True
-    max_len_aa : int, optional
-        Maximum length of the AA sequences, by default None
-    max_len_ss : int, optional
-        Maximum length of the SS sequences, by default None
-    val: bool, optional
-        Whether to create a validation set, by default True
-    device: str, optional
-        Device to move the tensors (cuda or cpu), by default "cuda"
-
-    Returns
-    -------
-    loaders : dict
+        keys: X_train_esm, X_val_esm, X_train_sf, X_val_sf, y_train, y_val
+    returns:
         Dictionary containing the train and validation data loaders
     """
     assert use_aa or use_sf, "At least one of the features should be used"
@@ -309,8 +261,8 @@ def return_loaders(
             val_ds = AA_Dataset(padded_X_val_aa, y_val)
 
     train_loader = DataLoader(
-        train_ds, batch_size=bs, shuffle=True
-    )  # shuffle the training data
+        train_ds, batch_size=bs, shuffle=True,# drop_last=drop_last
+    ) 
     loaders["train_loader"] = train_loader
 
     if val:
@@ -364,9 +316,6 @@ def custom_stratify(data, features=["labels", "CRISPR_system"], encode=True):
     return df
 
 
-from collections import Counter
-from sklearn.metrics import f1_score
-
 def prediction_stats(preds, val_data, verbose=0, plot=False):
     """
     This function shows information about the predictions.
@@ -386,7 +335,7 @@ def prediction_stats(preds, val_data, verbose=0, plot=False):
         with the number of correct and wrong predictions for that subsystem, as well as accuracy and F1 score.
         Example: res = {"I-E": {"correct": 10, "wrong": 5, "accuracy": 0.667, "f1": 0.8},
     """
-    preds = np.array(preds).argmax(axis=1)
+    # preds = np.array(preds).argmax(axis=1)
     labels = np.array([v["inhibition"] for v in val_data])
     sys_pred_pair = [(p, v["CRISPR_system_type"]) for p, v in zip(preds, val_data)]
     sys_lbl_pair = [(l, v["CRISPR_system_type"]) for l, v in zip(labels, val_data)]
@@ -394,32 +343,47 @@ def prediction_stats(preds, val_data, verbose=0, plot=False):
     correct = preds == labels
     wrong = preds != labels
 
-    CRISPR_systems = [v["CRISPR_system"]+"_"+v["CRISPR_system_type"] for v in val_data]
+    CRISPR_systems = [
+        v["CRISPR_system"] + "_" + v["CRISPR_system_type"] for v in val_data
+    ]
     wrong_names = [CRISPR_systems[i] for i in range(len(wrong)) if wrong[i]]
     correct_names = [CRISPR_systems[i] for i in range(len(correct)) if correct[i]]
 
     unique_names = sorted(set(wrong_names) | set(correct_names))
 
     system_stat = {
-        "I-F": {"correct": 0, "wrong": 0, },
-        "I-E": {"correct": 0, "wrong": 0, },
-        "I-C": {"correct": 0, "wrong": 0, }
+        "I-F": {
+            "correct": 0,
+            "wrong": 0,
+        },
+        "I-E": {
+            "correct": 0,
+            "wrong": 0,
+        },
+        "I-C": {
+            "correct": 0,
+            "wrong": 0,
+        },
     }
 
     for name in unique_names:
-        subsystem = name.split("_")[-1] # I-F, I-E, or I-C
+        subsystem = name.split("_")[-1]  # I-F, I-E, or I-C
         system_stat[subsystem]["correct"] += correct_names.count(name)
         system_stat[subsystem]["wrong"] += wrong_names.count(name)
 
     for subsystem in system_stat:
-        system_stat[subsystem]["Accuracy"] = round(system_stat[subsystem]["correct"] / (
-                system_stat[subsystem]["correct"] + system_stat[subsystem]["wrong"]
-        ), 2)
+        system_stat[subsystem]["Accuracy"] = round(
+            system_stat[subsystem]["correct"]
+            / (system_stat[subsystem]["correct"] + system_stat[subsystem]["wrong"]),
+            2,
+        )
         labls_sys = [i[0] for i in sys_lbl_pair if i[1] == subsystem]
         preds_sys = [i[0] for i in sys_pred_pair if i[1] == subsystem]
-        system_stat[subsystem]["F1"] =  round(f1_score(labls_sys, preds_sys, average="weighted"), 2)
+        system_stat[subsystem]["F1"] = round(
+            f1_score(labls_sys, preds_sys, average="weighted"), 2
+        )
 
-    if plot: # show the F1 score for each subsystem
+    if plot:  # show the F1 score for each subsystem
         plt.figure(figsize=(5, 5))
         plt.bar(system_stat.keys(), [system_stat[i]["F1"] for i in system_stat])
         plt.title("F1 score for each CRISPR subsystem")
@@ -428,7 +392,7 @@ def prediction_stats(preds, val_data, verbose=0, plot=False):
     return system_stat
 
 
-def return_AUC(y_preds, y_val, plot_ROC=False, save_path=None):
+def return_AUC(y_preds, y_val, plot_ROC=False, save_path=None, title=None):
     """
     This function returns the AUC and AUPR score and plots the ROC curve
 
@@ -456,7 +420,8 @@ def return_AUC(y_preds, y_val, plot_ROC=False, save_path=None):
         plt.plot([0, 1], [0, 1], color="navy", lw=2, linestyle="--")
         plt.xlabel("False Positive Rate")
         plt.ylabel("True Positive Rate")
-        plt.title(f"ROC Curve")
+        if title is not None:
+            plt.title(title)
         plt.legend(loc="lower right")
         if save_path is not None:
             os.makedirs(save_path[: save_path.rfind("/")], exist_ok=True)
@@ -483,14 +448,70 @@ def plot_train_val_data(train_data, val_data=None, rot=70, save_path=None, plot=
     if val_data is not None:
         y_val = [i["inhibition"] for i in val_data]
         sns.countplot(x=y_val, ax=ax[1])
-        ax[1].set_title("Validation Label Dist")
+        ax[1].set_title("Test Label Dist")
         val_data = sorted(val_data, key=lambda x: x["CRISPR_system"])
         sns.countplot(x=[i["CRISPR_system"] for i in val_data], ax=ax[3])
-        ax[3].set_title("Validation CRISPR Systems")
+        ax[3].set_title("Test CRISPR Systems")
         ax[3].set_xticklabels(ax[3].get_xticklabels(), rotation=rot)
 
     if save_path != None:
-        plt.savefig(f"{VERSION_FOLDER}/label_dist.jpg", dpi=300, bbox_inches="tight")
+        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+
+    if plot:
+        plt.show()
+
+
+def plot_train_test_lbl_sys(train_data, test_data, rot=70, save_path=None, plot=False):
+    def preprocess_data(data):
+        grouped = (
+            data[data["use"] == 1]
+            .groupby(["CRISPR_name_short", "inhibition"])
+            .size()
+            .reset_index(name="count")
+        )
+        # Replace the strain and system names as required
+        grouped["CRISPR_name_short"] = grouped["CRISPR_name_short"].replace(
+            {
+                "K12": "K12_IE",
+                "PA14": "PA14_IF",
+                "PaLML1_DVT419": "PaLML1_IC",
+                "SCRI1043": "SCRI1043_IF",
+                "SMC4386": "SMC4386_IE",
+            }
+        )
+
+        # Replace the heading of inhibition column with Inhibition
+        grouped = grouped.rename(columns={"inhibition": "Inhibition"})
+
+        return grouped
+
+    train_grouped = preprocess_data(train_data)
+    test_grouped = preprocess_data(test_data)
+
+    train_pivoted = train_grouped.pivot(
+        index="CRISPR_name_short", columns="Inhibition", values="count"
+    ).fillna(0)
+
+    test_pivoted = test_grouped.pivot(
+        index="CRISPR_name_short", columns="Inhibition", values="count"
+    ).fillna(0)
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
+
+    train_pivoted.plot(kind="bar", stacked=True, rot=rot, ax=ax1)
+    ax1.set_title("Train Dataset")
+    ax1.set_xlabel("strain and system type")
+    ax1.set_ylabel("Count")
+
+    test_pivoted.plot(kind="bar", stacked=True, rot=rot, ax=ax2)
+    ax2.set_title("Test Dataset")
+    ax2.set_xlabel("strain and system type")
+    ax2.set_ylabel("Count")
+
+    plt.suptitle("Distribution of Training and Test Data by Strain and Label")
+
+    if save_path is not None:
+        plt.savefig(save_path, dpi=300, bbox_inches="tight")
 
     if plot:
         plt.show()
@@ -501,7 +522,7 @@ def split_data(
     data,
     X_aa,
     X_ss,
-    test_size=0.15,
+    test_size=0.2,
     return_val=False,
     write_to_file=False,
 ):
@@ -510,8 +531,15 @@ def split_data(
     """
 
     (
-        train_df, test_df, train_data, test_data, X_train_aa, X_test_aa, X_train_sf, X_test_sf
-     ) = train_test_split(
+        train_df,
+        test_df,
+        train_data,
+        test_data,
+        X_train_aa,
+        X_test_aa,
+        X_train_sf,
+        X_test_sf,
+    ) = train_test_split(
         inhibition_df,
         data,
         X_aa if X_aa is not None else [None for _ in range(len(data))],
@@ -523,8 +551,15 @@ def split_data(
 
     if return_val:
         (
-            val_df, test_df, val_data, test_data, X_val_aa, X_test_aa, X_val_sf, X_test_sf 
-        )= train_test_split(
+            val_df,
+            test_df,
+            val_data,
+            test_data,
+            X_val_aa,
+            X_test_aa,
+            X_val_sf,
+            X_test_sf,
+        ) = train_test_split(
             test_df,
             test_data,
             test_size=0.5,
@@ -555,11 +590,23 @@ def split_data(
 
 def undersample_PaLML1_SMC4386(inhibition_df):
     """Drop 19 negative samples from PaLML1_IC and 18 negative samples from SMC4386 to balance the dataset"""
-    df_to_drop1 = inhibition_df[(inhibition_df["CRISPR_name_short"] == "PaLML1_DVT419") & (inhibition_df["inhibition"] == 0)]\
-                    .sample(n=19, random_state=RANDOM_STATE).index
-    df_to_drop2= inhibition_df[(inhibition_df["CRISPR_name_short"] == "SMC4386") & (inhibition_df["inhibition"] == 0)]\
-                    .sample(n=18, random_state=RANDOM_STATE).index
-    
+    df_to_drop1 = (
+        inhibition_df[
+            (inhibition_df["CRISPR_name_short"] == "PaLML1_DVT419")
+            & (inhibition_df["inhibition"] == 0)
+        ]
+        .sample(n=19, random_state=RANDOM_STATE)
+        .index
+    )
+    df_to_drop2 = (
+        inhibition_df[
+            (inhibition_df["CRISPR_name_short"] == "SMC4386")
+            & (inhibition_df["inhibition"] == 0)
+        ]
+        .sample(n=18, random_state=RANDOM_STATE)
+        .index
+    )
+
     inhibition_df = inhibition_df.drop(df_to_drop1)
     inhibition_df = inhibition_df.drop(df_to_drop2)
 
@@ -588,3 +635,266 @@ def group_system_label(inhibition_df):
     # replace the heading of inhibition column with Inhibition
     grouped = grouped.rename(columns={"inhibition": "Inhibition"})
     return grouped
+
+
+def extract_combined_features(data, config, verbose=0):
+    """
+    This function calculates the hidden states (ESM and SS) for the Acr and Cas sequences
+    and then concatenates the Acr and Cas hidden states
+
+    Parameters:
+    ----------------
+    data (list):
+        list of dictionaries containing the Acr and Cas sequences
+    config (dict):
+        dictionary containing the configuration parameters.
+        config["feature_mode"] = 0: just ESM
+        config["feature_mode"] = 1: one-hot encoding of amino acids
+        config["feature_mode"] = 3: for just SS, no ESM
+
+        config["Acr_Cas_mode"] = 1: just Cas
+        config["Acr_Cas_mode"] = 2: Acr and Cas
+
+        config["channels_first"] = True: the output tensor will have the shape (batch_size, channels, seq_len)
+        config["channels_first"] = False: the output tensor will have the shape (batch_size, seq_len, channels)
+
+    verbose (int):
+        verbose level
+
+    Returns:
+    ----------------
+    features (list):
+        list of tensors
+    """
+
+    if verbose:
+        print("Extracting features ...")
+        print(f"Feature mode: {config['feature_mode']}")
+        print("channels_first: ", config["channels_first"])
+
+    features = []
+
+    for i, dict in enumerate(data):
+        states = []
+        crispr_states = []
+        cas_proteins = dict["Cas_proteins"]
+        cas_ids = dict["Cas_ids"]
+
+        ########################### Acr ###########################
+        if config["Acr_Cas_mode"] > 1:
+            acr = dict["Acr_seq"]
+            acr_id = dict["Acr_id"]
+            acr_state = None
+
+            if config["feature_mode"] == 0:  # ESM
+                acr_state = extract_hidden_state(acr)
+            elif config["feature_mode"] == 3:  # SS
+                acr_ss = return_ss_pt(acr_id, ss_df_path=config["Acr_ss_df"])
+                acr_state = acr_ss.unsqueeze(0)
+            elif config["feature_mode"] == 1:  # one-hot encoding AA
+                acr_state = one_hot_enc(acr)
+                acr_state = acr_state.unsqueeze(0)
+
+            if config["channels_first"]:
+                acr_state = acr_state.permute(0, 2, 1)
+
+            states.append(acr_state)
+
+        ########################### CRISPR ###########################
+        # ESM
+        if config["feature_mode"] == 0:
+            crispr_states = extract_hidden_state(cas_proteins)
+            if config["channels_first"]:
+                crispr_states = [state.permute(0, 2, 1) for state in crispr_states]
+
+        # one-hot encoding
+        elif config["feature_mode"] == 1:
+            for cas in cas_proteins:
+                crispr_state = one_hot_enc(cas)
+                crispr_state = crispr_state.unsqueeze(0)
+                if config["channels_first"]:
+                    crispr_state = crispr_state.permute(0, 2, 1)
+
+                crispr_states.append(crispr_state)
+
+        # SF
+        elif config["feature_mode"] == 3:
+            for j in range(len(cas_ids)):
+                # get the secondary structure features for the Cas proteins
+                crispr_ss = return_ss_pt(cas_ids[j], ss_df_path=config["CRISPR_ss_df"])
+
+                crispr_ss = crispr_ss.unsqueeze(0)
+                if config["channels_first"]:
+                    crispr_ss = crispr_ss.permute(0, 2, 1)
+                    # print(crispr_ss.shape)
+
+                crispr_states.append(crispr_ss)
+
+        if config["CRISPR_mode"] == "concat":
+            states.extend(crispr_states)
+        # elif config["CRISPR_mode"] == "sum":
+        #     states.append(sum_tensors(crispr_states))
+
+        states_concat = torch.cat(states, dim=2 if config["channels_first"] else 1)
+
+        if config["Acr_Cas_mode"] == 1:  # Cas only mode
+            features.append(
+                (dict["CRISPR_system"], states_concat)
+            )  # if just crispr, add the system name to the features
+
+        else:
+            features.append(states_concat)
+
+        if verbose:
+            print(f"features extracted {i+1}/{len(data)}! size: {states_concat.shape}")
+
+    return features
+
+
+def extract_hidden_state(seqs):
+    """
+    This function extracts the hidden states for a list of sequences
+
+    Parameters
+    ----------
+    seqs : list
+        list of sequences
+
+    Returns
+    -------
+    list
+        list of hidden states
+    """
+
+    if type(seqs) == str:
+        return comp_hidden_states(seqs)[-1]
+
+    states = []
+    for seq in seqs:
+        cas_state = comp_hidden_states(seq)[-1]
+        states.append(cas_state)
+
+    return states
+
+
+def load_extrated_features(feature_mode, features_config, data):
+    feature_dir = f"{VERSION_FOLDER}/pkl/{PROJ_VERSION}/"
+    features_file_name = f"_{features_config['features_names']}_rs{RANDOM_STATE}.pkl"
+
+    features_aa, features_sf = None, None
+
+    exclude_mode_dict = features_config["exclude_mode_dict"]
+    excl_mode = features_config["exclude_mode"]
+    if exclude_mode_dict[excl_mode] is not None:
+        features_file_name = features_file_name.replace(
+            ".pkl", f"_excl_{'_'.join(exclude_mode_dict[excl_mode])}.pkl"
+        )
+    # if undersample:
+    #     features_file_name = features_file_name.replace(".pkl", "_undersample.pkl")
+
+    # AA features
+    if feature_mode == 3:
+        features_config[
+            "feature_mode"
+        ] = 1  # 0 for just ESM | 1 for one-hot encoding of AA| 3 for just sf |
+        features_aa = extract_combined_features(data, features_config, verbose=1)
+
+    # Structural Features
+    if feature_mode == 2 or feature_mode == 4:
+        features_config["feature_mode"] = 3
+        os.makedirs(feature_dir, exist_ok=True)
+        ffn_sf = "SF" + features_file_name
+        if os.path.exists(feature_dir + ffn_sf) != True:
+            features_sf = extract_combined_features(data, features_config, verbose=1)
+            with open(feature_dir + ffn_sf, "wb") as f:
+                pickle.dump(features_sf, f)
+        else:
+            features_sf = pickle.load(open(feature_dir + ffn_sf, "rb"))
+
+    # ESM features
+    if feature_mode == 1 or feature_mode == 4:
+        features_config["feature_mode"] = 0
+        os.makedirs(feature_dir, exist_ok=True)
+        ffn_trans = (
+            "ESM" + features_file_name
+            if features_config["model_name"].find("ESM") != -1
+            else "prot" + features_file_name
+        )
+
+        if os.path.exists(feature_dir + ffn_trans) != True:
+            load_feature_extractor(features_config, return_model=True)
+            features_aa = extract_combined_features(data, features_config, verbose=1)
+            with open(feature_dir + ffn_trans, "wb") as f:
+                pickle.dump(features_aa, f)
+        else:
+            features_aa = pickle.load(open(feature_dir + ffn_trans, "rb"))
+
+    return features_aa, features_sf
+
+
+def prepare_loaders(
+    split_dict,
+    use_aa,
+    use_sf,
+    device,
+):
+    """
+    This function prepares the data loaders for training and validation
+    and returns: loaders, seq_len_aa, seq_len_sf
+    """
+    
+    if use_aa:
+        X_train_aa = split_dict["X_train_aa"]
+        X_test_aa = split_dict["X_test_aa"]
+    if use_sf:
+        X_train_sf = split_dict["X_train_sf"]
+        X_test_sf = split_dict["X_test_sf"]
+
+    train_data = split_dict["train_data"]
+    test_data = split_dict["test_data"]
+
+    y_train = [d["inhibition"] for d in train_data]
+    y_test = [d["inhibition"] for d in test_data]
+
+    loader_input = {
+        "X_train_aa": X_train_aa if use_aa else None,
+        "X_val_aa": X_test_aa if use_aa else None,
+        "X_train_sf": X_train_sf if use_sf else None,
+        "X_val_sf": X_test_sf if use_sf else None,
+        "y_train": y_train,
+        "y_val": y_test,
+    }
+
+    loaders = return_loaders(
+        loader_input,
+        use_aa=use_aa,
+        use_sf=use_sf,
+        bs=BS,
+        channels_first=True,
+        val=True,
+        device=device,
+    )
+
+    if use_sf and use_aa:
+        seq_len_aa = loaders["train_loader"].dataset[0][0][0].size()[1]
+        seq_len_sf = loaders["train_loader"].dataset[0][0][1].size()[1]
+    elif use_aa and not use_sf:
+        seq_len_aa = loaders["train_loader"].dataset[0][0].size()[1]
+        seq_len_sf = 0
+    elif use_sf and not use_aa:
+        seq_len_aa = 0
+        seq_len_sf = loaders["train_loader"].dataset[0][0].size()[1]
+
+    return loaders, seq_len_aa, seq_len_sf
+
+
+def compute_class_weight(y_train, device):
+    class_weights = class_weight.compute_class_weight(
+                class_weight="balanced", classes=np.unique(y_train), y=y_train
+            )
+    class_weights = torch.tensor(
+        class_weights,
+        device=device,
+        dtype=torch.float,
+    )
+    return class_weights

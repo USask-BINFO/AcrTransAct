@@ -4,8 +4,7 @@ import biolib
 import numpy as np
 import torch
 import json
-from utils.data_utils import find_nums
-from sklearn.preprocessing import OneHotEncoder
+from utils.misc import find_nums
 
 
 def str_list_to_float_list(str_list):

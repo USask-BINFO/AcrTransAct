@@ -21,6 +21,31 @@ from transformers import (
 )
 model, device, tokenizer = None, None, None
 
+def count_parameters(model):
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+
+def setup_features(feature_mode, esm_version):
+    if feature_mode == 1:
+        use_sf = False
+        features_names = f"ESM{esm_version}"
+        use_aa = True
+    elif feature_mode == 2:
+        use_sf = True
+        features_names = "Just SF"
+        use_aa = False
+    elif feature_mode == 3:
+        use_sf = False
+        features_names = "One-hot AA"
+        use_aa = True
+    elif feature_mode == 4: # ESM + SF
+        use_sf = True
+        use_aa = True
+        features_names = f"ESM{esm_version} + SF"
+
+    return use_sf, use_aa, features_names
+
+
 
 def load_feature_extractor(model_config, return_model=False):
     """
@@ -76,16 +101,17 @@ def load_feature_extractor(model_config, return_model=False):
         "ESM35m": "facebook/esm2_t12_35M_UR50D",
         "ESM8m": "facebook/esm2_t6_8M_UR50D",
         }
-        
+
+        esm_name = model_config["model_name"].split("+")[0].strip()
         tokenizer = EsmTokenizer.from_pretrained(
-            ESM_model_dic[model_config["model_name"]], do_lower_case=False
+            ESM_model_dic[esm_name], do_lower_case=False
         )
 
         if model_config["task"] == "analysis"\
               or model_config["task"] == "PPI":
 
             model = EsmModel.from_pretrained(
-                ESM_model_dic[model_config["model_name"]],
+                ESM_model_dic[esm_name],
                 output_attentions=model_config["output_attentions"],
                 output_hidden_states=model_config["output_hidden_states"],
             )
@@ -282,7 +308,7 @@ def accuracy_torch(y_pred, y_true):
     return accuracy
 
 
-def f1_torch(y_true, y_pred, test_d= False):
+def f1_torch(y_true, y_pred):
     """
     Computes the F1 score for a given threshold.
 
@@ -303,13 +329,14 @@ def f1_torch(y_true, y_pred, test_d= False):
         Recall score.
     """
 
-    precision = precision_score(y_true.cpu(), y_pred.cpu(), average='weighted', zero_division=1)
-    recall = recall_score(y_true.cpu(), y_pred.cpu(), average='weighted', zero_division=1)
-    f1 = f1_score(y_true.cpu(), y_pred.cpu(), average='weighted', zero_division=1)
+    precision = precision_score(y_true.cpu().detach(), y_pred.cpu().detach(), average='weighted', zero_division=1)
+    recall = recall_score(y_true.cpu().detach(), y_pred.cpu().detach(), average='weighted', zero_division=1)
+    f1 = f1_score(y_true.cpu().detach(), y_pred.cpu().detach(), average='weighted', zero_division=1)
 
     f1, precision, recall = torch.tensor(f1), torch.tensor(precision), torch.tensor(recall)
 
     return f1, precision, recall
+
 
 def get_best_run_wandb(sweep_id, wandb_proj):
 
@@ -333,7 +360,8 @@ def get_best_run_wandb(sweep_id, wandb_proj):
     print(sweep_id)
     try:
         sweep = api.sweep(f"{wandb_proj}/{sweep_id}")
-    except:
+    except Exception as e:
+        print(e)
         sweep = api.sweep(f"AcrTransAct_v4.2/{sweep_id}")
     best_run = sweep.best_run()
 

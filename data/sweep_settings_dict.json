@@ -1,0 +1,18 @@
+{   "CNN_ESM150m + SF": "yxp13s9d",
+    "CNN_ESM35m + SF": "w1f0e0w7",
+    "CNN_ESM8m + SF": "35zvks6o",
+    "CNN_ESM150m": "04h45l0o",
+    "CNN_ESM35m": "0xa4vpkt",
+    "CNN_ESM8m": "rfkjw8l3",
+    "CNN_One-hot AA": "7gbx651k",
+    "CNN_Just SF": "7glafm6i",
+
+    "LSTM_ESM150m + SF": "eescbhji",
+    "LSTM_ESM35m + SF": "58tsp4qv",
+    "LSTM_ESM8m + SF": "8r848iwv",
+    "LSTM_ESM150m": "g53iseqn",
+    "LSTM_ESM35m": "rc9sdpki",
+    "LSTM_ESM8m": "7jzehdhp",
+    "LSTM_One-hot AA": "sjunkong",
+    "LSTM_Just SF": "cng4dwdn"
+}

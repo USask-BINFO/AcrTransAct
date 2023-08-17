@@ -1,11 +1,10 @@
 #!/bin/bash
-
 COMMON_ARGS="python3 code/training.py
             --excl_mode=0
             --monitor_ckpt=val_f1_score
             --optimize_metric=F1_CV
             --esm_version=8m
-            --wandb_log=True
+            --wandb_log=False
             --cross_val=True
             --run_mode=train
             --do_sweep=False"
@@ -27,7 +26,7 @@ COMMON_ARGS="python3 code/training.py
             --monitor_ckpt=val_f1_score
             --optimize_metric=F1_CV
             --do_sweep=False
-            --wandb_log=True
+            --wandb_log=False
             --cross_val=True
             --run_mode=train
             --feature_mode=1"

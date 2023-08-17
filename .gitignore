@@ -1,4 +1,3 @@
-data
 *.ipynb_checkpoints
 *__pycache__
 *~$*
@@ -38,3 +37,6 @@ biolib_results_inference/
 *cv_rep_res/
 *.png
 *jpg
+*.zip
+code/logs
+data_
