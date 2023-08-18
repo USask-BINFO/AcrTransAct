@@ -18,7 +18,7 @@ Welcome to the AcrTransAct repository! 🌟 This repository houses the code and 
 AcrTransAct is an advanced web application powered by a transformer-based Deep Neural Network (DNN) designed to predict the likelihood of Acr-mediated CRISPR-Cas inhibition. This sophisticated tool takes protein sequences as input, extracts structural and latent sequence features, and provides insightful predictions about the inhibitory potential of the input protein on various CRISPR-Cas systems.
 
 <p align="center">
-  <img src="img/AcrTransAct.png" alt="AcrTransAct Overview" width="80%">
+  <img src="img/AcrTransAct.png" alt="AcrTransAct Overview" width="100%">
 </p>
 
 ## Requirements 🛠️
